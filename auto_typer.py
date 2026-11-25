@@ -1,762 +1,837 @@
 """
 ================================================================================
-AUTO TYPER - Natural Human Typing Simulator Desktop Application
+CynoType (Auto Typer) — Natural Human & Smart IDE Typing Simulator
+Native macOS Apple Design Science UI + Cross-Platform Engine.
 ================================================================================
 
-Required libraries to install before running:
-    pip install pynput pyperclip
-
-Optional: To build a standalone Windows .exe:
-    pip install pyinstaller
-    pyinstaller --noconsole --onefile auto_typer.py
-
 Features:
-- Large multi-line text input with live character, word, and line counters.
-- Prominent Start and Stop buttons (toolbar + pinned bottom bar) with hotkeys.
-- Keystroke delay slider (speed control) showing delay in ms and chars/second.
-- "Humanize speed" option with natural delay jitter and punctuation cadence.
-- Configurable countdown delay before typing starts so you can switch windows.
-- Optional window auto-minimize during typing and auto-restore when finished.
-- Global emergency stop hotkey (F8 or Esc) that works even when unfocused.
-- Accurate character simulation with automatic fallback to clipboard paste.
-- Multi-threaded execution with a thread-safe message queue so the GUI never freezes.
+- Smart IDE Mode (from chanul212/Auto-Typer v2): tracks cursor indentation across
+  lines in VS Code, Cursor, PyCharm, Xcode, and online IDEs — prevents double
+  indentation without ever collapsing or deleting lines.
+- Plain Text Mode: verbatim line-by-line typing preserving exact input.
+- Auto-Detect Indentation: inspects pasted code for Tabs, 2-space, or 4-space style.
+- Clean 2D code editor with no-wrap default, wrap toggle, Tab / Shift+Tab line
+  indenting, dynamic tab stops, and true-to-source clipboard paste.
+- Natural human typing rhythm with Gaussian jitter and punctuation pauses.
+- Configurable start countdown, window auto-minimize & auto-restore, and Reset All.
+- Global emergency stop (Esc or F8) via macOS Quartz Event Tap (ignores simulated
+  Esc keys sent when dismissing IDE autocomplete popups).
+- Native macOS Cocoa window with vibrancy, translucent glass panels, and CynoType icon.
 ================================================================================
 """
 
+import base64
+import json
 import os
+import queue
+import subprocess
 import sys
 import time
-import random
-import queue
-import platform
-import threading
-import tkinter as tk
-from tkinter import ttk, messagebox
-from typing import Optional, Tuple, Any
 
-import pyperclip
-from pynput import keyboard
-from pynput.keyboard import Controller, Key
-
-
-class TypingApp:
-    """Main desktop application class for the Auto Typer simulator."""
-
-    def __init__(self, root: tk.Tk):
-        self.root = root
-        self.root.title("Auto Typer - Human Typing Simulator")
-        self.root.geometry("740x660")
-        self.root.minsize(580, 520)
-
-        # Keyboard simulation controller
-        self.keyboard = Controller()
-
-        # Concurrency & communication queue
-        self.is_running = False
-        self.stop_event = threading.Event()
-        self.stop_reason: Optional[str] = None
-        self.typing_thread: Optional[threading.Thread] = None
-        self.msg_queue: queue.Queue = queue.Queue()
-        self._queue_poll_job: Optional[str] = None
-
-        # Apply a polished modern ttk theme
-        self._configure_styles()
-
-        # Build user interface
-        self._create_widgets()
-
-        # Keyboard shortcuts inside the window
-        self.root.bind("<F6>", lambda e: self.start_typing())
-        self.root.bind("<Control-Return>", lambda e: self.start_typing())
-
-        # Start background queue poller for thread-safe UI updates
-        self._start_queue_poller()
-
-        # Start global emergency stop listener (F8 and Esc)
-        self._start_global_hotkey_listener()
-
-        # Handle window close event cleanly
-        self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
-
-    def _configure_styles(self):
-        """Set up ttk styling and color palette."""
-        self.style = ttk.Style()
-        available_themes = self.style.theme_names()
-        if "vista" in available_themes:
-            self.style.theme_use("vista")
-        elif "clam" in available_themes:
-            self.style.theme_use("clam")
-
-        # Color palette
-        self.bg_color = "#f4f5f7"
-        self.primary_color = "#0066cc"
-        self.text_color = "#202124"
-        self.subtext_color = "#5f6368"
-        self.success_color = "#107c10"
-        self.danger_color = "#d83b01"
-
-        self.root.configure(bg=self.bg_color)
-
-        # Custom ttk styles
-        self.style.configure(".", font=("Segoe UI", 9))
-        self.style.configure("Header.TLabel", font=("Segoe UI", 14, "bold"), foreground="#1a1a1a")
-        self.style.configure("SubHeader.TLabel", font=("Segoe UI", 9), foreground=self.subtext_color)
-        self.style.configure("Badge.TLabel", font=("Segoe UI", 8, "bold"), foreground="#b3261e", background="#fce8e6", padding=4)
-        self.style.configure("Stats.TLabel", font=("Segoe UI", 8), foreground=self.subtext_color)
-
-    def _create_widgets(self):
-        """Build and arrange all UI widgets with pinned bottom controls."""
-        main_container = ttk.Frame(self.root, padding="12")
-        main_container.pack(fill=tk.BOTH, expand=True)
-
-        # -------------------------------------------------------------
-        # 1. Header Section (Top)
-        # -------------------------------------------------------------
-        header_frame = ttk.Frame(main_container)
-        header_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 8))
-
-        title_box = ttk.Frame(header_frame)
-        title_box.pack(side=tk.LEFT, fill=tk.Y)
-
-        lbl_title = ttk.Label(title_box, text="⌨️ Human Auto Typer", style="Header.TLabel")
-        lbl_title.pack(anchor=tk.W)
-
-        lbl_subtitle = ttk.Label(
-            title_box,
-            text="Simulate realistic keystrokes into any window or web application",
-            style="SubHeader.TLabel"
-        )
-        lbl_subtitle.pack(anchor=tk.W)
-
-        # Emergency Stop Badge in top right
-        hotkey_badge = ttk.Label(
-            header_frame,
-            text="Emergency Stop: F8 or ESC",
-            style="Badge.TLabel",
-            relief=tk.GROOVE
-        )
-        hotkey_badge.pack(side=tk.RIGHT, pady=2)
-
-        # -------------------------------------------------------------
-        # 2. Action Buttons (Pinned to the Very Bottom)
-        # -------------------------------------------------------------
-        btn_frame = ttk.Frame(main_container)
-        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
-
-        # Big, highly visible Start Button
-        self.btn_start = tk.Button(
-            btn_frame,
-            text="▶  START TYPING  (F6 or Ctrl+Enter)",
-            font=("Segoe UI", 11, "bold"),
-            bg="#107c10",
-            fg="#ffffff",
-            activebackground="#0b5a0b",
-            activeforeground="#ffffff",
-            relief=tk.RAISED,
-            bd=2,
-            cursor="hand2",
-            height=2,
-            command=self.start_typing
-        )
-        self.btn_start.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-
-        # Big, highly visible Stop Button
-        self.btn_stop = tk.Button(
-            btn_frame,
-            text="⏹  STOP TYPING  (Esc or F8)",
-            font=("Segoe UI", 11, "bold"),
-            bg="#d0d0d0",
-            fg="#888888",
-            activebackground="#a82e01",
-            activeforeground="#ffffff",
-            relief=tk.RAISED,
-            bd=2,
-            cursor="hand2",
-            height=2,
-            state=tk.DISABLED,
-            command=lambda: self.stop_typing(source="Stop button")
-        )
-        self.btn_stop.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(5, 0))
-
-        # -------------------------------------------------------------
-        # 3. Status & Progress Section (Pinned above buttons)
-        # -------------------------------------------------------------
-        status_group = ttk.LabelFrame(main_container, text=" Status & Progress ", padding="8")
-        status_group.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 6))
-
-        # Status row
-        status_row = ttk.Frame(status_group)
-        status_row.pack(fill=tk.X, pady=(0, 4))
-
-        self.lbl_status_badge = ttk.Label(status_row, text="IDLE", font=("Segoe UI", 9, "bold"), foreground="#5f6368")
-        self.lbl_status_badge.pack(side=tk.LEFT, padx=(0, 8))
-
-        self.lbl_status_text = ttk.Label(
-            status_row,
-            text="Ready. Paste your text, choose your options, and click 'Start Typing'.",
-            font=("Segoe UI", 9)
-        )
-        self.lbl_status_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        # Progress bar with percentage
-        prog_row = ttk.Frame(status_group)
-        prog_row.pack(fill=tk.X)
-
-        self.progress_bar = ttk.Progressbar(prog_row, orient=tk.HORIZONTAL, mode='determinate')
-        self.progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
-
-        self.lbl_progress_pct = ttk.Label(prog_row, text="0%", width=5, font=("Segoe UI", 9, "bold"))
-        self.lbl_progress_pct.pack(side=tk.RIGHT)
-
-        # -------------------------------------------------------------
-        # 4. Settings & Controls Section (Pinned above status)
-        # -------------------------------------------------------------
-        settings_group = ttk.LabelFrame(main_container, text=" Typing Speed & Options ", padding="8")
-        settings_group.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 6))
-
-        # Speed Slider Row
-        speed_header_row = ttk.Frame(settings_group)
-        speed_header_row.pack(fill=tk.X, pady=(0, 2))
-
-        ttk.Label(speed_header_row, text="Typing Delay:").pack(side=tk.LEFT)
-        self.lbl_speed_val = ttk.Label(speed_header_row, text="45 ms / key (~22 chars/sec)", font=("Segoe UI", 9, "bold"))
-        self.lbl_speed_val.pack(side=tk.RIGHT)
-
-        slider_row = ttk.Frame(settings_group)
-        slider_row.pack(fill=tk.X, pady=(0, 6))
-
-        ttk.Label(slider_row, text="Fast (10ms)", style="Stats.TLabel").pack(side=tk.LEFT)
-        self.speed_slider = ttk.Scale(
-            slider_row,
-            from_=10,
-            to=250,
-            value=45,
-            orient=tk.HORIZONTAL,
-            command=self._on_speed_slider_change
-        )
-        self.speed_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
-        ttk.Label(slider_row, text="Slow (250ms)", style="Stats.TLabel").pack(side=tk.RIGHT)
-
-        # Option Checkboxes & Inputs Row
-        opts_row = ttk.Frame(settings_group)
-        opts_row.pack(fill=tk.X, pady=(2, 2))
-
-        # Randomize delay checkbox
-        self.randomize_var = tk.BooleanVar(value=True)
-        chk_random = ttk.Checkbutton(
-            opts_row,
-            text="Humanize speed (random jitter & punctuation pauses)",
-            variable=self.randomize_var
-        )
-        chk_random.pack(side=tk.LEFT)
-
-        # Auto-minimize window checkbox
-        self.minimize_var = tk.BooleanVar(value=True)
-        chk_minimize = ttk.Checkbutton(
-            opts_row,
-            text="Minimize window during typing (restores on finish)",
-            variable=self.minimize_var
-        )
-        chk_minimize.pack(side=tk.RIGHT)
-
-        # Start Delay Row
-        delay_row = ttk.Frame(settings_group)
-        delay_row.pack(fill=tk.X, pady=(4, 0))
-
-        ttk.Label(delay_row, text="Countdown delay before typing begins:").pack(side=tk.LEFT)
-        self.spin_delay = ttk.Spinbox(delay_row, from_=1, to=30, width=4)
-        self.spin_delay.set(5)
-        self.spin_delay.pack(side=tk.LEFT, padx=6)
-        ttk.Label(delay_row, text="seconds  (gives you time to click into the target window)").pack(side=tk.LEFT)
-
-        # -------------------------------------------------------------
-        # 5. Text Input Area (Expands to fill all remaining vertical space)
-        # -------------------------------------------------------------
-        text_group = ttk.LabelFrame(main_container, text=" Text to Type ", padding="8")
-        text_group.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(0, 6))
-
-        # Toolbar above the text area with Quick Start button
-        text_toolbar = ttk.Frame(text_group)
-        text_toolbar.pack(fill=tk.X, pady=(0, 6))
-
-        # Quick Start button right in the toolbar
-        self.btn_start_top = tk.Button(
-            text_toolbar,
-            text="▶ Start Typing",
-            font=("Segoe UI", 9, "bold"),
-            bg="#107c10",
-            fg="#ffffff",
-            activebackground="#0b5a0b",
-            activeforeground="#ffffff",
-            relief=tk.RAISED,
-            bd=1,
-            cursor="hand2",
-            padx=8,
-            command=self.start_typing
-        )
-        self.btn_start_top.pack(side=tk.LEFT, padx=(0, 4))
-
-        self.btn_stop_top = tk.Button(
-            text_toolbar,
-            text="⏹ Stop",
-            font=("Segoe UI", 9, "bold"),
-            bg="#d0d0d0",
-            fg="#888888",
-            activebackground="#a82e01",
-            activeforeground="#ffffff",
-            relief=tk.RAISED,
-            bd=1,
-            cursor="hand2",
-            padx=8,
-            state=tk.DISABLED,
-            command=lambda: self.stop_typing(source="Stop button")
-        )
-        self.btn_stop_top.pack(side=tk.LEFT, padx=(0, 10))
-
-        btn_paste = ttk.Button(text_toolbar, text="📋 Paste", command=self._paste_clipboard, width=9)
-        btn_paste.pack(side=tk.LEFT, padx=(0, 4))
-
-        btn_sample = ttk.Button(text_toolbar, text="📝 Sample", command=self._load_sample_text, width=9)
-        btn_sample.pack(side=tk.LEFT, padx=(0, 4))
-
-        btn_clear = ttk.Button(text_toolbar, text="🗑️ Clear", command=self._clear_text, width=9)
-        btn_clear.pack(side=tk.LEFT, padx=(0, 4))
-
-        self.lbl_text_stats = ttk.Label(text_toolbar, text="0 characters | 0 words | 0 lines", style="Stats.TLabel")
-        self.lbl_text_stats.pack(side=tk.RIGHT, padx=4)
-
-        # Text Box with Scrollbars (comfortable initial height of 9 lines)
-        text_container = ttk.Frame(text_group)
-        text_container.pack(fill=tk.BOTH, expand=True)
-
-        v_scroll = ttk.Scrollbar(text_container, orient=tk.VERTICAL)
-        v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.text_area = tk.Text(
-            text_container,
-            wrap=tk.WORD,
-            undo=True,
-            height=9,
-            yscrollcommand=v_scroll.set,
-            font=("Consolas", 10),
-            bg="#ffffff",
-            fg="#1e1e1e",
-            insertbackground="#000000",
-            selectbackground="#cce8ff",
-            relief=tk.SOLID,
-            borderwidth=1,
-            padx=8,
-            pady=8
-        )
-        self.text_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        v_scroll.config(command=self.text_area.yview)
-
-        # Keybindings and right click menu for text box
-        self.text_area.bind("<KeyRelease>", lambda e: self._update_stats())
-        self.text_area.bind("<Control-a>", self._select_all_text)
-        self.text_area.bind("<Control-A>", self._select_all_text)
-        self._setup_context_menu()
-
-    # -----------------------------------------------------------------
-    # UI Helper Methods & Event Handlers
-    # -----------------------------------------------------------------
-    def _set_buttons_state(self, running: bool):
-        """Update appearance and enable/disable state of all Start and Stop buttons."""
-        if running:
-            # Disable Start buttons
-            for btn in (self.btn_start, self.btn_start_top):
-                btn.config(state=tk.DISABLED, bg="#d0d0d0", fg="#888888")
-            # Enable Stop buttons (vibrant alert red)
-            for btn in (self.btn_stop, self.btn_stop_top):
-                btn.config(state=tk.NORMAL, bg="#d83b01", fg="#ffffff")
-        else:
-            # Enable Start buttons (vibrant forest green)
-            for btn in (self.btn_start, self.btn_start_top):
-                btn.config(state=tk.NORMAL, bg="#107c10", fg="#ffffff")
-            # Disable Stop buttons
-            for btn in (self.btn_stop, self.btn_stop_top):
-                btn.config(state=tk.DISABLED, bg="#d0d0d0", fg="#888888")
-
-    def _setup_context_menu(self):
-        """Context menu for right-clicking the text box."""
-        self.context_menu = tk.Menu(self.root, tearoff=0)
-        self.context_menu.add_command(label="Cut", command=lambda: self.text_area.event_generate("<<Cut>>"))
-        self.context_menu.add_command(label="Copy", command=lambda: self.text_area.event_generate("<<Copy>>"))
-        self.context_menu.add_command(label="Paste", command=self._paste_clipboard)
-        self.context_menu.add_separator()
-        self.context_menu.add_command(label="Select All", command=self._select_all_text)
-        self.context_menu.add_command(label="Clear", command=self._clear_text)
-
-        self.text_area.bind("<Button-3>", self._show_context_menu)
-
-    def _show_context_menu(self, event):
-        """Display the context menu at mouse position."""
-        self.context_menu.tk_popup(event.x_root, event.y_root)
-
-    def _select_all_text(self, event=None):
-        """Select all text inside the text widget."""
-        self.text_area.tag_add("sel", "1.0", "end")
-        return "break"
-
-    def _paste_clipboard(self):
-        """Paste clipboard content into the text area."""
-        try:
-            content = pyperclip.paste()
-            if content:
-                self.text_area.insert(tk.INSERT, content)
-                self._update_stats()
-        except Exception as e:
-            messagebox.showerror("Clipboard Error", f"Could not paste clipboard content:\n{e}")
-
-    def _clear_text(self):
-        """Clear the text area."""
-        self.text_area.delete("1.0", tk.END)
-        self._update_stats()
-
-    def _load_sample_text(self):
-        """Insert a sample text snippet for demonstration."""
-        sample = (
-            "Hello World!\n"
-            "This text is being automatically typed using natural keystroke simulation.\n"
-            "Notice how it handles multiple lines, punctuation pauses (like this!), and tabs:\n"
-            "\t• Item 1: Speed jitter mimics authentic human fingers.\n"
-            "\t• Item 2: Special symbols (#, $, @, %) and emojis (🔥, 🚀) are supported.\n"
-            "Press F8 or Esc anytime to instantly stop typing."
-        )
-        self.text_area.delete("1.0", tk.END)
-        self.text_area.insert("1.0", sample)
-        self._update_stats()
-
-    def _update_stats(self):
-        """Update live character, word, and line count labels."""
-        raw_text = self.text_area.get("1.0", "end-1c")
-        chars = len(raw_text)
-        words = len(raw_text.split())
-        lines = len(raw_text.splitlines()) if raw_text else 0
-        self.lbl_text_stats.config(text=f"{chars:,} characters | {words:,} words | {lines:,} lines")
-
-    def _on_speed_slider_change(self, val):
-        """Update slider readout with ms delay and characters/sec."""
-        ms = int(round(float(val)))
-        cps = 1000.0 / ms if ms > 0 else 0
-        wpm = int(cps * 60 / 5)
-        self.lbl_speed_val.config(text=f"{ms} ms / key (~{cps:.1f} chars/sec, ~{wpm} WPM)")
-
-    def _set_status(self, badge: str, message: str, color: str = "#202124"):
-        """Update status badge and description message."""
-        self.lbl_status_badge.config(text=badge.upper(), foreground=color)
-        self.lbl_status_text.config(text=message, foreground=color)
-
-    # -----------------------------------------------------------------
-    # Thread-Safe Queue Processing (Dispatched on Main Tkinter Loop)
-    # -----------------------------------------------------------------
-    def _start_queue_poller(self):
-        """Periodically drain the message queue on the main GUI thread."""
-        try:
-            while not self.msg_queue.empty():
-                msg_type, data = self.msg_queue.get_nowait()
-                if msg_type == "status":
-                    badge, text, color = data
-                    self._set_status(badge, text, color)
-                elif msg_type == "progress":
-                    typed_count, total_chars, pct, msg = data
-                    self._update_progress_ui(typed_count, total_chars, pct, msg)
-                elif msg_type == "finished":
-                    self._on_process_finished_ui(data)
-                elif msg_type == "stopped":
-                    self._on_process_stopped_ui(data)
-                elif msg_type == "minimize":
-                    self.root.iconify()
-        except Exception as e:
-            print(f"[Queue Poller Warning] {e}")
-        finally:
-            # Re-schedule poller every 30ms (~33 fps)
-            self._queue_poll_job = self.root.after(30, self._start_queue_poller)
-
-    def _update_progress_ui(self, current: int, total: int, pct: float, msg: str):
-        """Update progress bar and status on GUI thread."""
-        self.progress_bar["value"] = pct
-        self.lbl_progress_pct.config(text=f"{pct:.0f}%")
-        self._set_status("TYPING", msg, self.primary_color)
-
-    def _on_process_finished_ui(self, total_chars: int):
-        """Handle finish state on GUI thread."""
-        self.is_running = False
-        self._set_buttons_state(running=False)
-        self.progress_bar["value"] = 100
-        self.lbl_progress_pct.config(text="100%")
-        self._set_status(
-            "FINISHED",
-            f"Finished! Successfully typed all {total_chars:,} characters.",
-            self.success_color
-        )
-        if self.minimize_var.get():
-            self._restore_window()
-
-    def _on_process_stopped_ui(self, reason: str):
-        """Handle stopped state on GUI thread."""
-        self.is_running = False
-        self._set_buttons_state(running=False)
-        self._set_status(
-            "STOPPED",
-            f"Typing stopped ({reason}).",
-            self.danger_color
-        )
-        if self.minimize_var.get():
-            self._restore_window()
-
-    def _restore_window(self):
-        """Restore and bring the application window back to foreground."""
-        try:
-            self.root.deiconify()
-            self.root.lift()
-            self.root.attributes("-topmost", True)
-            self.root.after(300, lambda: self.root.attributes("-topmost", False))
-            self.root.focus_force()
-        except Exception as e:
-            print(f"[Restore Window Warning] {e}")
-
-    # -----------------------------------------------------------------
-    # Emergency Stop Global Hotkey
-    # -----------------------------------------------------------------
-    def _start_global_hotkey_listener(self):
-        """Listen globally for F8 or Esc to halt typing immediately."""
-        def on_press(key):
-            try:
-                if key in (Key.f8, Key.esc):
-                    if self.is_running:
-                        key_name = getattr(key, "name", "HOTKEY").upper()
-                        # Immediately flag stop
-                        self.stop_reason = f"Emergency Hotkey ({key_name})"
-                        self.stop_event.set()
-                        self._release_all_modifiers()
-            except Exception:
-                pass
-
-        self.hotkey_listener = keyboard.Listener(on_press=on_press)
-        self.hotkey_listener.daemon = True
-        self.hotkey_listener.start()
-
-    def _release_all_modifiers(self):
-        """Release modifier keys to avoid keyboard state lock."""
-        for mod in (Key.ctrl, Key.shift, Key.alt, Key.cmd):
-            try:
-                self.keyboard.release(mod)
-            except Exception:
-                pass
-
-    # -----------------------------------------------------------------
-    # Typing Execution Logic
-    # -----------------------------------------------------------------
-    def start_typing(self):
-        """Validate input and spawn typing background thread."""
-        if self.is_running:
-            return
-
-        text = self.text_area.get("1.0", "end-1c")
-        if not text:
-            messagebox.showwarning("No Text", "Please paste or enter some text to type before starting.")
-            return
-
-        try:
-            start_delay = int(self.spin_delay.get())
-            if start_delay < 1:
-                start_delay = 1
-        except ValueError:
-            start_delay = 5
-            self.spin_delay.set(5)
-
-        base_delay_ms = float(self.speed_slider.get())
-        base_delay = max(0.005, base_delay_ms / 1000.0)
-        randomize = self.randomize_var.get()
-        auto_minimize = self.minimize_var.get()
-
-        # Update application state and button visuals
-        self.is_running = True
-        self.stop_event.clear()
-        self.stop_reason = None
-        self._set_buttons_state(running=True)
-
-        self.progress_bar["value"] = 0
-        self.lbl_progress_pct.config(text="0%")
-
-        # Launch typing thread
-        self.typing_thread = threading.Thread(
-            target=self._typing_worker,
-            args=(text, base_delay, randomize, start_delay, auto_minimize),
-            daemon=True
-        )
-        self.typing_thread.start()
-
-    def stop_typing(self, source: str = "User"):
-        """Abort typing process on request."""
-        if self.is_running:
-            self.stop_reason = source
-            self.stop_event.set()
-            self._release_all_modifiers()
-
-    def _typing_worker(self, text: str, base_delay: float, randomize: bool, start_delay: int, auto_minimize: bool):
-        """Background thread executing countdown and keystroke simulation."""
-        total_chars = len(text)
-
-        # Auto-minimize window if enabled to reveal the target window
-        if auto_minimize:
-            self.msg_queue.put(("minimize", None))
-
-        # 1. Countdown Phase
-        for remaining in range(start_delay, 0, -1):
-            if self.stop_event.is_set():
-                reason = self.stop_reason or "Stopped during countdown"
-                self.msg_queue.put(("stopped", reason))
-                return
-
-            status_msg = f"Starting in {remaining}s... Click your target window now! (Press F8/Esc to abort)"
-            self.msg_queue.put((
-                "status",
-                (f"COUNTDOWN ({remaining}s)", status_msg, "#b06000")
-            ))
-
-            # Wait 1.0 second in the worker thread (wakes immediately if stop_event is set)
-            if self.stop_event.wait(1.0):
-                reason = self.stop_reason or "Stopped during countdown"
-                self.msg_queue.put(("stopped", reason))
-                return
-
-        if self.stop_event.is_set():
-            reason = self.stop_reason or "Stopped before typing"
-            self.msg_queue.put(("stopped", reason))
-            return
-
-        # 2. Typing Phase
-        self.msg_queue.put((
-            "status",
-            ("TYPING", f"Typing: 0 / {total_chars:,} characters (0%)", self.primary_color)
-        ))
-
-        update_interval = 1 if total_chars < 300 else max(1, total_chars // 100)
-        typed_count = 0
-
-        for idx, char in enumerate(text):
-            if self.stop_event.is_set():
-                reason = self.stop_reason or f"Stopped at {typed_count:,} of {total_chars:,} characters"
-                self.msg_queue.put(("stopped", reason))
-                return
-
-            # Simulate the character keystroke
-            self._type_character(char)
-            typed_count += 1
-
-            # Compute realistic delay
-            delay = self._calculate_delay(char, base_delay, randomize)
-
-            # Update progress smoothly without choking Tkinter event queue
-            if typed_count % update_interval == 0 or typed_count == total_chars:
-                pct = (typed_count / total_chars) * 100.0
-                msg = f"Typing: {typed_count:,} / {total_chars:,} characters ({pct:.0f}%)"
-                self.msg_queue.put(("progress", (typed_count, total_chars, pct, msg)))
-
-            # Wait for keystroke delay (wakes immediately if stop_event is set)
-            if self.stop_event.wait(delay):
-                reason = self.stop_reason or f"Stopped at {typed_count:,} of {total_chars:,} characters"
-                self.msg_queue.put(("stopped", reason))
-                return
-
-        # 3. Finished Successfully
-        self.msg_queue.put(("finished", total_chars))
-
-    def _type_character(self, char: str):
-        """
-        Simulate typing an individual character.
-        Handles newlines, tabs, standard characters, and falls back to
-        clipboard paste for complex unicode or unsupported symbols.
-        """
-        # Carriage return alone (from Windows CRLF) is skipped
-        if char == '\r':
-            return
-
-        # Newline maps to Enter key
-        if char == '\n':
-            self.keyboard.press(Key.enter)
-            self.keyboard.release(Key.enter)
-            return
-
-        # Tab maps to Tab key
-        if char == '\t':
-            self.keyboard.press(Key.tab)
-            self.keyboard.release(Key.tab)
-            return
-
-        # Standard typing via pynput controller
-        try:
-            self.keyboard.type(char)
-        except Exception:
-            # Clipboard fallback for characters not directly supported by current keyboard layout
-            self._paste_character(char)
-
-    def _paste_character(self, char: str):
-        """Fallback mechanism: copies character to clipboard and simulates paste."""
-        try:
-            pyperclip.copy(char)
-            time.sleep(0.01)
-            # Use Cmd on macOS, Ctrl on Windows and Linux
-            mod = Key.cmd if platform.system() == "Darwin" else Key.ctrl
-            with self.keyboard.pressed(mod):
-                self.keyboard.press('v')
-                self.keyboard.release('v')
-            time.sleep(0.01)
-        except Exception as err:
-            print(f"[Fallback Paste Warning] Could not paste '{char}': {err}")
-
-    def _calculate_delay(self, char: str, base_delay: float, randomize: bool) -> float:
-        """Calculate keystroke delay with authentic human-like cadence."""
-        if not randomize:
-            return base_delay
-
-        # Base gaussian jitter (centered at base_delay, standard deviation ~25%)
-        jitter = random.gauss(0, base_delay * 0.25)
-        delay = max(0.005, base_delay + jitter)
-
-        # Natural cadence pauses for punctuation & thinking breaks
-        if char in ('.', '!', '?'):
-            delay += random.uniform(0.14, 0.32)  # Sentence ending pause
-        elif char in (',', ';', ':', '—', '-'):
-            delay += random.uniform(0.06, 0.16)  # Clause pause
-        elif char == '\n':
-            delay += random.uniform(0.18, 0.38)  # New line / paragraph pause
-        elif char == ' ':
-            delay += random.uniform(0.01, 0.04)  # Space bar cadence
-        elif random.random() < 0.03:
-            delay += random.uniform(0.08, 0.22)  # 3% chance of brief hesitation
-
-        return delay
-
-    def _on_closing(self):
-        """Cleanly handle application window closing."""
-        if self.is_running:
-            self.stop_typing(source="Window closed")
-
-        if self._queue_poll_job is not None:
-            try:
-                self.root.after_cancel(self._queue_poll_job)
-            except Exception:
-                pass
-
-        if hasattr(self, "hotkey_listener") and self.hotkey_listener.is_alive():
-            try:
+try:
+    import pyperclip
+    from pynput import keyboard
+    from pynput.keyboard import Key
+except ImportError as _err:
+    print(f"Missing library: {_err}\nRun:  pip install -r requirements.txt")
+    sys.exit(1)
+
+from cynotype.engine import (
+    APP_NAME,
+    APP_VERSION,
+    IS_MAC,
+    IS_WIN,
+    MacHotkeyListener,
+    TypingEngine,
+    analyze_indentation,
+    mac_check_permissions,
+)
+
+
+def resource_path(rel_path: str) -> str:
+    """Resolve an asset path both from source and inside a PyInstaller bundle."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, rel_path)
+
+
+def build_ui_html(platform_class: str) -> str:
+    """Load assets/ui.html and inline the CynoType brand mark and platform class."""
+    html_path = resource_path("assets/ui.html")
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    logo_data_uri = ""
+    mark_path = resource_path("assets/logo_mark.png")
+    if os.path.exists(mark_path):
+        with open(mark_path, "rb") as img_f:
+            b64 = base64.b64encode(img_f.read()).decode("ascii")
+            logo_data_uri = f"data:image/png;base64,{b64}"
+
+    return html.replace("__LOGO_MARK_DATA__", logo_data_uri).replace(
+        "__PLATFORM_CLASS__", platform_class
+    )
+
+
+# ==============================================================================
+# Native macOS Cocoa + Vibrancy + WKWebView Application
+# ==============================================================================
+def run_macos_app():
+    import objc
+    import AppKit
+    import Foundation
+    from PyObjCTools import AppHelper
+
+    # Load Apple's built-in WebKit framework dynamically (no extra pip dependency!)
+    wk_ns = {}
+    objc.loadBundle(
+        "WebKit",
+        wk_ns,
+        bundle_path="/System/Library/Frameworks/WebKit.framework",
+    )
+    WKWebView = wk_ns["WKWebView"]
+    WKWebViewConfiguration = wk_ns["WKWebViewConfiguration"]
+
+    class CynoAppDelegate(AppKit.NSObject):
+        def init(self):
+            self = objc.super(CynoAppDelegate, self).init()
+            if self is None:
+                return None
+            self.window = None
+            self.webview = None
+            self.engine = None
+            self.hotkey_listener = None
+            return self
+
+        def _js(self, call_expr: str):
+            def _run():
+                if self.webview is not None:
+                    self.webview.evaluateJavaScript_completionHandler_(call_expr, None)
+
+            AppHelper.callAfter(_run)
+
+        def _setup_menu_bar(self):
+            menubar = AppKit.NSMenu.alloc().init()
+
+            # Application menu
+            app_menu_item = AppKit.NSMenuItem.alloc().init()
+            menubar.addItem_(app_menu_item)
+            app_menu = AppKit.NSMenu.alloc().initWithTitle_(APP_NAME)
+            app_menu.addItemWithTitle_action_keyEquivalent_(
+                f"About {APP_NAME}", "orderFrontStandardAboutPanel:", ""
+            )
+            app_menu.addItem_(AppKit.NSMenuItem.separatorItem())
+            app_menu.addItemWithTitle_action_keyEquivalent_(
+                f"Hide {APP_NAME}", "hide:", "h"
+            )
+            app_menu.addItem_(AppKit.NSMenuItem.separatorItem())
+            app_menu.addItemWithTitle_action_keyEquivalent_(
+                f"Quit {APP_NAME}", "terminate:", "q"
+            )
+            app_menu_item.setSubmenu_(app_menu)
+
+            # Edit menu (enables native Cmd+Z / Cmd+X / Cmd+C / Cmd+V / Cmd+A in WKWebView)
+            edit_menu_item = AppKit.NSMenuItem.alloc().init()
+            menubar.addItem_(edit_menu_item)
+            edit_menu = AppKit.NSMenu.alloc().initWithTitle_("Edit")
+            edit_menu.addItemWithTitle_action_keyEquivalent_("Undo", "undo:", "z")
+            edit_menu.addItemWithTitle_action_keyEquivalent_("Redo", "redo:", "Z")
+            edit_menu.addItem_(AppKit.NSMenuItem.separatorItem())
+            edit_menu.addItemWithTitle_action_keyEquivalent_("Cut", "cut:", "x")
+            edit_menu.addItemWithTitle_action_keyEquivalent_("Copy", "copy:", "c")
+            edit_menu.addItemWithTitle_action_keyEquivalent_("Paste", "paste:", "v")
+            edit_menu.addItemWithTitle_action_keyEquivalent_(
+                "Select All", "selectAll:", "a"
+            )
+            edit_menu_item.setSubmenu_(edit_menu)
+
+            # Window menu
+            win_menu_item = AppKit.NSMenuItem.alloc().init()
+            menubar.addItem_(win_menu_item)
+            win_menu = AppKit.NSMenu.alloc().initWithTitle_("Window")
+            win_menu.addItemWithTitle_action_keyEquivalent_(
+                "Minimize", "performMiniaturize:", "m"
+            )
+            win_menu.addItemWithTitle_action_keyEquivalent_(
+                "Close", "performClose:", "w"
+            )
+            win_menu_item.setSubmenu_(win_menu)
+
+            AppKit.NSApp.setMainMenu_(menubar)
+
+        def _load_app_icon(self):
+            for candidate in ("assets/CynoType.icns", "assets/logo.png"):
+                p = resource_path(candidate)
+                if os.path.exists(p):
+                    img = AppKit.NSImage.alloc().initWithContentsOfFile_(p)
+                    if img is not None:
+                        AppKit.NSApp.setApplicationIconImage_(img)
+                        return
+
+        def _build_html(self) -> str:
+            return build_ui_html("platform-mac")
+
+        def applicationDidFinishLaunching_(self, _notification):
+            self._setup_menu_bar()
+            self._load_app_icon()
+
+            # Initialize TypingEngine on main thread
+            self.engine = TypingEngine(
+                on_status=self._on_engine_status,
+                on_progress=self._on_engine_progress,
+                on_finished=self._on_engine_finished,
+                on_stopped=self._on_engine_stopped,
+                on_minimize=self._on_engine_minimize,
+            )
+
+            # Start Quartz global Esc / F8 listener
+            listener = MacHotkeyListener(self.engine.handle_emergency_hotkey)
+            listener.start()
+            for _ in range(15):
+                if listener.started_ok.is_set() or listener.failed.is_set():
+                    break
+                time.sleep(0.02)
+            self.hotkey_listener = listener
+
+            # Build sleek native macOS window
+            width, height = 820.0, 776.0
+            titlebar_strip = 32.0
+            style = (
+                AppKit.NSWindowStyleMaskTitled
+                | AppKit.NSWindowStyleMaskClosable
+                | AppKit.NSWindowStyleMaskMiniaturizable
+                | AppKit.NSWindowStyleMaskResizable
+                | AppKit.NSWindowStyleMaskFullSizeContentView
+            )
+            self.window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+                Foundation.NSMakeRect(0, 0, width, height),
+                style,
+                AppKit.NSBackingStoreBuffered,
+                False,
+            )
+            self.window.setTitle_(APP_NAME)
+            self.window.setAppearance_(
+                AppKit.NSAppearance.appearanceNamed_(AppKit.NSAppearanceNameAqua)
+            )
+            self.window.setTitlebarAppearsTransparent_(True)
+            self.window.setTitleVisibility_(AppKit.NSWindowTitleHidden)
+            self.window.setMovableByWindowBackground_(True)
+            self.window.setMinSize_(Foundation.NSMakeSize(700.0, 620.0))
+            self.window.setDelegate_(self)
+
+            # Native macOS frosted vibrancy backdrop
+            vev = AppKit.NSVisualEffectView.alloc().initWithFrame_(
+                Foundation.NSMakeRect(0, 0, width, height)
+            )
+            vev.setMaterial_(AppKit.NSVisualEffectMaterialUnderWindowBackground)
+            vev.setBlendingMode_(AppKit.NSVisualEffectBlendingModeBehindWindow)
+            vev.setState_(AppKit.NSVisualEffectStateActive)
+            vev.setAutoresizingMask_(
+                AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable
+            )
+            self.window.setContentView_(vev)
+
+            # WKWebView mounted cleanly below the 32px native draggable titlebar strip
+            cfg = WKWebViewConfiguration.alloc().init()
+            cfg.userContentController().addScriptMessageHandler_name_(self, "bridge")
+
+            self.webview = WKWebView.alloc().initWithFrame_configuration_(
+                Foundation.NSMakeRect(0, 0, width, height - titlebar_strip), cfg
+            )
+            self.webview.setValue_forKey_(False, "drawsBackground")
+            self.webview.setAutoresizingMask_(
+                AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable
+            )
+            vev.addSubview_(self.webview)
+            self.webview.loadHTMLString_baseURL_(self._build_html(), None)
+
+            self.window.center()
+            self.window.makeKeyAndOrderFront_(None)
+            AppKit.NSApp.activateIgnoringOtherApps_(True)
+
+        def applicationShouldTerminateAfterLastWindowClosed_(self, _sender):
+            return True
+
+        def applicationWillTerminate_(self, _notification):
+            if self.engine is not None and self.engine.is_running:
+                self.engine.stop("Application quit")
+            if self.hotkey_listener is not None:
                 self.hotkey_listener.stop()
+
+        # ------------------------------------------------------------------
+        # Engine -> UI callbacks
+        # ------------------------------------------------------------------
+        def _on_engine_status(self, msg: str, is_active: bool):
+            self._js(
+                f"window.CynoBridge.onStatus({json.dumps(msg)}, {json.dumps(bool(is_active))})"
+            )
+
+        def _on_engine_progress(self, pct: float, msg: str):
+            self._js(f"window.CynoBridge.onProgress({pct:.2f}, {json.dumps(msg)})")
+
+        def _on_engine_minimize(self):
+            def _do():
+                if self.window is not None:
+                    self.window.miniaturize_(None)
+
+            AppHelper.callAfter(_do)
+
+        def _restore_window(self):
+            def _do():
+                if self.window is not None:
+                    if self.window.isMiniaturized():
+                        self.window.deminiaturize_(None)
+                    self.window.makeKeyAndOrderFront_(None)
+                    AppKit.NSApp.activateIgnoringOtherApps_(True)
+
+            AppHelper.callAfter(_do)
+
+        def _on_engine_finished(self, total_chars: int, auto_minimize: bool):
+            self._js(f"window.CynoBridge.onFinished({int(total_chars)})")
+            if auto_minimize:
+                self._restore_window()
+
+        def _on_engine_stopped(self, reason: str, auto_minimize: bool):
+            self._js(f"window.CynoBridge.onStopped({json.dumps(reason)})")
+            if auto_minimize:
+                self._restore_window()
+
+        # ------------------------------------------------------------------
+        # macOS permission helpers
+        # ------------------------------------------------------------------
+        def _refresh_permissions(self, prompt_if_missing: bool = False):
+            can_type, can_listen, lib = mac_check_permissions()
+            listener_failed = (
+                isinstance(self.hotkey_listener, MacHotkeyListener)
+                and self.hotkey_listener.failed.is_set()
+            )
+            effective_listen = can_listen and not listener_failed
+
+            if prompt_if_missing and lib is not None:
+                try:
+                    if not can_type and hasattr(lib, "CGRequestPostEventAccess"):
+                        lib.CGRequestPostEventAccess()
+                    if not effective_listen and hasattr(
+                        lib, "CGRequestListenEventAccess"
+                    ):
+                        lib.CGRequestListenEventAccess()
+                except Exception:
+                    pass
+
+            if can_type and effective_listen:
+                self._js("window.CynoBridge.onPermissions(true, true, '', '')")
+                return True, True
+
+            if not can_type and not effective_listen:
+                desc = "Enable CynoType in Accessibility & Input Monitoring, then reopen."
+                pane = "Privacy_Accessibility"
+            elif not can_type:
+                desc = "Enable CynoType in Accessibility so it can simulate keystrokes."
+                pane = "Privacy_Accessibility"
+            else:
+                desc = "Enable CynoType in Input Monitoring for global Esc / F8 stop."
+                pane = "Privacy_ListenEvent"
+
+            self._js(
+                f"window.CynoBridge.onPermissions("
+                f"{json.dumps(can_type)}, {json.dumps(effective_listen)}, "
+                f"{json.dumps(desc)}, {json.dumps(pane)})"
+            )
+            return can_type, effective_listen
+
+        # ------------------------------------------------------------------
+        # JS -> Python bridge
+        # ------------------------------------------------------------------
+        def userContentController_didReceiveScriptMessage_(self, _controller, message):
+            body = message.body()
+            if not body:
+                return
+            action = str(body.get("action", ""))
+
+            if action == "ui_ready":
+                self._refresh_permissions(prompt_if_missing=False)
+
+            elif action == "check_permissions":
+                self._refresh_permissions(prompt_if_missing=True)
+
+            elif action == "open_permissions":
+                pane = str(body.get("pane", "Privacy_Accessibility"))
+                self._refresh_permissions(prompt_if_missing=True)
+                try:
+                    subprocess.Popen(
+                        [
+                            "open",
+                            f"x-apple.systempreferences:com.apple.preference.security?{pane}",
+                        ]
+                    )
+                except Exception:
+                    pass
+
+            elif action == "request_paste":
+                try:
+                    pb = AppKit.NSPasteboard.generalPasteboard()
+                    content = pb.stringForType_(AppKit.NSPasteboardTypeString)
+                    if content is None:
+                        content = pyperclip.paste()
+                    if content:
+                        self._js(
+                            f"window.CynoBridge.onPasteText({json.dumps(str(content))})"
+                        )
+                except Exception as err:
+                    print(f"[Paste Warning] {err}")
+
+            elif action == "auto_detect":
+                text = str(body.get("text", ""))
+                silent = bool(body.get("silent", False))
+                spaces, use_tab, msg = analyze_indentation(text)
+                self._js(
+                    f"window.CynoBridge.onAutoDetectResult("
+                    f"{int(spaces)}, {json.dumps(use_tab)}, {json.dumps(msg)}, {json.dumps(silent)})"
+                )
+
+            elif action == "request_reset":
+                has_text = bool(body.get("has_text", False))
+                if has_text:
+                    alert = AppKit.NSAlert.alloc().init()
+                    alert.setMessageText_("Reset CynoType?")
+                    alert.setInformativeText_(
+                        "This clears the editor and restores all speed and indentation settings to their defaults."
+                    )
+                    alert.addButtonWithTitle_("Reset")
+                    alert.addButtonWithTitle_("Cancel")
+                    alert.setAlertStyle_(AppKit.NSAlertStyleInformational)
+                    if alert.runModal() != AppKit.NSAlertFirstButtonReturn:
+                        return
+                if self.engine.is_running:
+                    self.engine.stop("Reset")
+                self._js("window.CynoBridge.onPerformReset()")
+
+            elif action == "start":
+                can_type, _ = self._refresh_permissions(prompt_if_missing=True)
+                if not can_type:
+                    self._on_engine_status(
+                        "Grant Accessibility permission in System Settings, then reopen",
+                        False,
+                    )
+                    return
+
+                started = self.engine.start(
+                    text=str(body.get("text", "")),
+                    base_delay_ms=float(body.get("base_delay_ms", 45)),
+                    randomize=bool(body.get("randomize", True)),
+                    start_delay=int(body.get("start_delay", 5)),
+                    auto_minimize=bool(body.get("auto_minimize", True)),
+                    code_mode=bool(body.get("code_mode", True)),
+                    dismiss_autocomplete=bool(body.get("dismiss_autocomplete", True)),
+                    use_tab_key=bool(body.get("use_tab_key", True)),
+                    spaces_per_tab=int(body.get("spaces_per_tab", 4)),
+                )
+                if started:
+                    self._js("window.CynoBridge.onStarted()")
+
+            elif action == "stop":
+                source = str(body.get("source", "Stop button"))
+                self.engine.stop(source)
+
+    app = AppKit.NSApplication.sharedApplication()
+    app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
+    delegate = CynoAppDelegate.alloc().init()
+    app.setDelegate_(delegate)
+    AppHelper.runEventLoop()
+
+
+# ==============================================================================
+# Cross-Platform Fallback UI (Windows / Linux) using Shared TypingEngine
+# ==============================================================================
+def run_tk_fallback_app():
+    import tkinter as tk
+    from tkinter import ttk, messagebox, font as tkfont
+
+    root = tk.Tk()
+    root.title(f"{APP_NAME} — Human Auto Typer")
+    root.geometry("820x740")
+    root.minsize(640, 560)
+    root.configure(bg="#F5F5F7")
+
+    msg_queue: queue.Queue = queue.Queue()
+    style = ttk.Style()
+    if "vista" in style.theme_names():
+        style.theme_use("vista")
+    elif "clam" in style.theme_names():
+        style.theme_use("clam")
+
+    ui_font = "Segoe UI" if IS_WIN else "DejaVu Sans"
+    mono_font = "Consolas" if IS_WIN else "DejaVu Sans Mono"
+    style.configure(".", font=(ui_font, 10), background="#F5F5F7", foreground="#1D1D1F")
+    style.configure("TFrame", background="#F5F5F7")
+    style.configure("Card.TFrame", background="#FFFFFF")
+    style.configure("TLabel", background="#F5F5F7", foreground="#1D1D1F")
+    style.configure("Sub.TLabel", background="#F5F5F7", foreground="#6E6E73", font=(ui_font, 9))
+    style.configure("TCheckbutton", background="#F5F5F7", foreground="#1D1D1F")
+
+    container = ttk.Frame(root, padding=24)
+    container.pack(fill=tk.BOTH, expand=True)
+
+    # Header
+    hdr = ttk.Frame(container)
+    hdr.pack(fill=tk.X, pady=(0, 16))
+    ttk.Label(hdr, text=APP_NAME, font=(ui_font, 18, "bold")).pack(side=tk.LEFT)
+    lbl_status = ttk.Label(hdr, text="Ready to type", style="Sub.TLabel")
+    lbl_status.pack(side=tk.LEFT, padx=(16, 0), pady=(6, 0))
+
+    code_mode_var = tk.BooleanVar(value=True)
+    ttk.Checkbutton(hdr, text="Code Mode (Smart IDE)", variable=code_mode_var).pack(side=tk.RIGHT)
+
+    # Editor toolbar
+    bar = ttk.Frame(container)
+    bar.pack(fill=tk.X, pady=(0, 8))
+    lbl_stats = ttk.Label(bar, text="0 lines · 0 characters", style="Sub.TLabel")
+    lbl_stats.pack(side=tk.LEFT)
+
+    # Text area
+    text_wrap = ttk.Frame(container)
+    text_wrap.pack(fill=tk.BOTH, expand=True, pady=(0, 16))
+    v_scroll = ttk.Scrollbar(text_wrap, orient=tk.VERTICAL)
+    v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+    h_scroll = ttk.Scrollbar(text_wrap, orient=tk.HORIZONTAL)
+    h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+
+    code_font = tkfont.Font(family=mono_font, size=10)
+    text_area = tk.Text(
+        text_wrap,
+        wrap=tk.NONE,
+        undo=True,
+        font=code_font,
+        tabs=(code_font.measure("    "),),
+        bg="#FFFFFF",
+        fg="#1D1D1F",
+        relief=tk.FLAT,
+        highlightthickness=1,
+        highlightbackground="#D2D2D7",
+        highlightcolor="#0071E3",
+        padx=12,
+        pady=12,
+        yscrollcommand=v_scroll.set,
+        xscrollcommand=h_scroll.set,
+    )
+    text_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    v_scroll.config(command=text_area.yview)
+    h_scroll.config(command=text_area.xview)
+
+    def update_stats(_e=None):
+        raw = text_area.get("1.0", "end-1c")
+        lines = len(raw.split("\n")) if raw else 0
+        lbl_stats.config(text=f"{lines:,} lines \u00B7 {len(raw):,} characters")
+
+    text_area.bind("<KeyRelease>", update_stats)
+
+    # Settings
+    opts = ttk.Frame(container)
+    opts.pack(fill=tk.X, pady=(0, 16))
+
+    speed_row = ttk.Frame(opts)
+    speed_row.pack(fill=tk.X, pady=(0, 8))
+    ttk.Label(speed_row, text="Typing Speed:").pack(side=tk.LEFT)
+    lbl_speed = ttk.Label(speed_row, text="45 ms", style="Sub.TLabel")
+    lbl_speed.pack(side=tk.RIGHT)
+
+    def on_speed(v):
+        ms = int(round(float(v)))
+        wpm = int((1000.0 / ms) * 60 / 5) if ms > 0 else 0
+        lbl_speed.config(text=f"{ms} ms \u00B7 ~{wpm} WPM")
+
+    slider = ttk.Scale(opts, from_=10, to=250, value=45, orient=tk.HORIZONTAL, command=on_speed)
+    slider.pack(fill=tk.X, pady=(0, 10))
+    on_speed(45)
+
+    row2 = ttk.Frame(opts)
+    row2.pack(fill=tk.X)
+    humanize_var = tk.BooleanVar(value=True)
+    minimize_var = tk.BooleanVar(value=True)
+    use_tab_var = tk.BooleanVar(value=True)
+    dismiss_var = tk.BooleanVar(value=True)
+    ttk.Checkbutton(row2, text="Natural rhythm", variable=humanize_var).pack(side=tk.LEFT, padx=(0, 12))
+    ttk.Checkbutton(row2, text="Minimize", variable=minimize_var).pack(side=tk.LEFT, padx=(0, 12))
+    ttk.Checkbutton(row2, text="Tab key indent", variable=use_tab_var).pack(side=tk.LEFT, padx=(0, 12))
+    ttk.Checkbutton(row2, text="Dismiss autocomplete", variable=dismiss_var).pack(side=tk.LEFT, padx=(0, 12))
+
+    spin_spaces = ttk.Spinbox(row2, from_=2, to=8, increment=2, width=3)
+    spin_spaces.set(4)
+    spin_spaces.pack(side=tk.RIGHT)
+    ttk.Label(row2, text="Tab width:").pack(side=tk.RIGHT, padx=(8, 4))
+
+    spin_delay = ttk.Spinbox(row2, from_=1, to=30, width=3)
+    spin_delay.set(5)
+    spin_delay.pack(side=tk.RIGHT)
+    ttk.Label(row2, text="Delay (s):").pack(side=tk.RIGHT, padx=(8, 4))
+
+    progress = ttk.Progressbar(container, orient=tk.HORIZONTAL, mode="determinate")
+    progress.pack(fill=tk.X, pady=(0, 12))
+
+    # Footer
+    footer = ttk.Frame(container)
+    footer.pack(fill=tk.X)
+    ttk.Label(footer, text="Ctrl+Enter / F6 to start \u00B7 F8 to stop", style="Sub.TLabel").pack(side=tk.LEFT)
+
+    engine = TypingEngine(
+        on_status=lambda m, a: msg_queue.put(("status", (m, a))),
+        on_progress=lambda p, m: msg_queue.put(("progress", (p, m))),
+        on_finished=lambda c, am: msg_queue.put(("finished", (c, am))),
+        on_stopped=lambda r, am: msg_queue.put(("stopped", (r, am))),
+        on_minimize=lambda: msg_queue.put(("minimize", None)),
+    )
+
+    def do_paste():
+        content = pyperclip.paste()
+        if content:
+            text_area.insert(tk.INSERT, content.replace("\r\n", "\n").replace("\r", "\n"))
+            update_stats()
+
+    def do_detect():
+        sp, ut, msg = analyze_indentation(text_area.get("1.0", "end-1c"))
+        spin_spaces.set(sp)
+        if ut is not None:
+            use_tab_var.set(ut)
+        lbl_status.config(text=msg)
+
+    ttk.Button(bar, text="Clear", command=lambda: (text_area.delete("1.0", tk.END), update_stats())).pack(side=tk.RIGHT, padx=(4, 0))
+    ttk.Button(bar, text="Paste", command=do_paste).pack(side=tk.RIGHT, padx=(4, 0))
+    ttk.Button(bar, text="Auto-Detect", command=do_detect).pack(side=tk.RIGHT, padx=(4, 0))
+
+    def on_primary():
+        if engine.is_running:
+            engine.stop("Stop button")
+            return
+        raw = text_area.get("1.0", "end-1c")
+        if not raw:
+            messagebox.showwarning(APP_NAME, "Please paste or enter text first.")
+            return
+        if engine.start(
+            text=raw,
+            base_delay_ms=float(slider.get()),
+            randomize=humanize_var.get(),
+            start_delay=int(spin_delay.get() or 5),
+            auto_minimize=minimize_var.get(),
+            code_mode=code_mode_var.get(),
+            dismiss_autocomplete=dismiss_var.get(),
+            use_tab_key=use_tab_var.get(),
+            spaces_per_tab=int(spin_spaces.get() or 4),
+        ):
+            btn_primary.config(text="Stop Typing", bg="#1D1D1F")
+
+    btn_primary = tk.Button(
+        footer,
+        text="Start Typing",
+        font=(ui_font, 10, "bold"),
+        bg="#0071E3",
+        fg="#FFFFFF",
+        activebackground="#0064C9",
+        activeforeground="#FFFFFF",
+        relief=tk.FLAT,
+        padx=20,
+        pady=8,
+        cursor="hand2",
+        command=on_primary,
+    )
+    btn_primary.pack(side=tk.RIGHT)
+
+    listener = keyboard.Listener(
+        on_press=lambda k: engine.handle_emergency_hotkey("F8") if k == Key.f8 else None
+    )
+    listener.daemon = True
+    listener.start()
+
+    root.bind("<F6>", lambda _e: on_primary() if not engine.is_running else None)
+    root.bind("<Control-Return>", lambda _e: on_primary() if not engine.is_running else None)
+
+    def poll():
+        while not msg_queue.empty():
+            kind, data = msg_queue.get_nowait()
+            if kind == "status":
+                lbl_status.config(text=data[0])
+            elif kind == "progress":
+                progress["value"] = data[0]
+                lbl_status.config(text=data[1])
+            elif kind == "minimize":
+                root.iconify()
+            elif kind == "finished":
+                progress["value"] = 100
+                btn_primary.config(text="Start Typing", bg="#0071E3")
+                lbl_status.config(text=f"Finished \u00B7 {data[0]:,} characters typed")
+                if data[1]:
+                    root.deiconify()
+            elif kind == "stopped":
+                progress["value"] = 0
+                btn_primary.config(text="Start Typing", bg="#0071E3")
+                lbl_status.config(text=f"Stopped \u00B7 {data[0]}")
+                if data[1]:
+                    root.deiconify()
+        root.after(30, poll)
+
+    poll()
+    root.protocol("WM_DELETE_WINDOW", lambda: (engine.stop("Closed"), listener.stop(), root.destroy()))
+    root.mainloop()
+
+
+# ==============================================================================
+# Native Windows / Linux WebView2 Application (Same Apple Design Science UI)
+# ==============================================================================
+def run_webview_app() -> bool:
+    """Run the full CynoType Apple Design Science UI on Windows/Linux via pywebview."""
+    try:
+        import webview
+    except ImportError:
+        return False
+
+    class WebViewBridge:
+        def __init__(self):
+            self.window = None
+            self.engine = TypingEngine(
+                on_status=self._on_status,
+                on_progress=self._on_progress,
+                on_finished=self._on_finished,
+                on_stopped=self._on_stopped,
+                on_minimize=self._on_minimize,
+            )
+            self.listener = keyboard.Listener(
+                on_press=lambda k: self.engine.handle_emergency_hotkey("F8")
+                if k == Key.f8
+                else None
+            )
+            self.listener.daemon = True
+            self.listener.start()
+
+        def _js(self, expr: str):
+            win = self.window
+            if win is not None:
+                try:
+                    win.evaluate_js(expr)
+                except Exception:
+                    pass
+
+        def _on_status(self, msg: str, is_active: bool):
+            self._js(
+                f"window.CynoBridge.onStatus({json.dumps(msg)}, {json.dumps(bool(is_active))})"
+            )
+
+        def _on_progress(self, pct: float, msg: str):
+            self._js(f"window.CynoBridge.onProgress({pct:.2f}, {json.dumps(msg)})")
+
+        def _on_minimize(self):
+            if self.window is not None:
+                try:
+                    self.window.minimize()
+                except Exception:
+                    pass
+
+        def _restore(self):
+            if self.window is not None:
+                try:
+                    self.window.restore()
+                except Exception:
+                    pass
+
+        def _on_finished(self, total_chars: int, auto_minimize: bool):
+            self._js(f"window.CynoBridge.onFinished({int(total_chars)})")
+            if auto_minimize:
+                self._restore()
+
+        def _on_stopped(self, reason: str, auto_minimize: bool):
+            self._js(f"window.CynoBridge.onStopped({json.dumps(reason)})")
+            if auto_minimize:
+                self._restore()
+
+        def shutdown(self):
+            if self.engine.is_running:
+                self.engine.stop("Window closed")
+            try:
+                self.listener.stop()
             except Exception:
                 pass
 
-        self.root.destroy()
+        def dispatch(self, body):
+            if not isinstance(body, dict):
+                return
+            action = str(body.get("action", ""))
+
+            if action == "request_paste":
+                try:
+                    content = pyperclip.paste()
+                    if content:
+                        self._js(
+                            f"window.CynoBridge.onPasteText({json.dumps(str(content))})"
+                        )
+                except Exception as err:
+                    print(f"[Paste Warning] {err}")
+
+            elif action == "auto_detect":
+                text = str(body.get("text", ""))
+                silent = bool(body.get("silent", False))
+                spaces, use_tab, msg = analyze_indentation(text)
+                self._js(
+                    f"window.CynoBridge.onAutoDetectResult("
+                    f"{int(spaces)}, {json.dumps(use_tab)}, {json.dumps(msg)}, {json.dumps(silent)})"
+                )
+
+            elif action == "request_reset":
+                has_text = bool(body.get("has_text", False))
+                if has_text and self.window is not None:
+                    confirmed = self.window.create_confirmation_dialog(
+                        "Reset CynoType?",
+                        "This clears the editor and restores all speed and indentation settings to their defaults.",
+                    )
+                    if not confirmed:
+                        return
+                if self.engine.is_running:
+                    self.engine.stop("Reset")
+                self._js("window.CynoBridge.onPerformReset()")
+
+            elif action == "start":
+                started = self.engine.start(
+                    text=str(body.get("text", "")),
+                    base_delay_ms=float(body.get("base_delay_ms", 45)),
+                    randomize=bool(body.get("randomize", True)),
+                    start_delay=int(body.get("start_delay", 5)),
+                    auto_minimize=bool(body.get("auto_minimize", True)),
+                    code_mode=bool(body.get("code_mode", True)),
+                    dismiss_autocomplete=bool(body.get("dismiss_autocomplete", True)),
+                    use_tab_key=bool(body.get("use_tab_key", True)),
+                    spaces_per_tab=int(body.get("spaces_per_tab", 4)),
+                )
+                if started:
+                    self._js("window.CynoBridge.onStarted()")
+
+            elif action == "stop":
+                self.engine.stop(str(body.get("source", "Stop button")))
+
+    bridge = WebViewBridge()
+    win = webview.create_window(
+        APP_NAME,
+        html=build_ui_html("platform-win"),
+        js_api=bridge,
+        width=820,
+        height=780,
+        min_size=(700, 620),
+        background_color="#F5F5F7",
+    )
+    bridge.window = win
+    win.events.closed += bridge.shutdown
+
+    ico_path = resource_path("assets/CynoType.ico")
+    start_kwargs = {}
+    if IS_WIN:
+        start_kwargs["gui"] = "edgechromium"
+    if os.path.exists(ico_path):
+        start_kwargs["icon"] = ico_path
+    webview.start(**start_kwargs)
+    return True
 
 
-# ==============================================================================
-# Application Entry Point
-# ==============================================================================
 def main():
-    root = tk.Tk()
-    app = TypingApp(root)
-    root.mainloop()
+    if IS_MAC:
+        run_macos_app()
+    else:
+        if not run_webview_app():
+            run_tk_fallback_app()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,13 @@
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Python & virtual environments
+.venv/
+__pycache__/
+*.py[cod]
+
+# PyInstaller build outputs & specs
+build/
+dist/
+*.spec

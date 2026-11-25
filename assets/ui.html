@@ -1,0 +1,1347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CynoType</title>
+<style>
+  /* ==========================================================================
+     CynoType — Apple Design Science System
+     4-color restrained palette:
+       1. Canvas neutral:  #F5F5F7 (layered lightly over macOS vibrancy)
+       2. Surface glass:   #FFFFFF (translucent frosted panels & crisp editor)
+       3. Neutral ink:     #1D1D1F (with opacity scale for hierarchy & dividers)
+       4. Primary accent:  #0071E3 (restrained to primary actions & active state)
+     Spacing: strict 8px grid (8 / 16 / 24 / 32)
+     Weights: 400 (Regular), 500 (Medium), 600 (Semibold)
+     ========================================================================== */
+
+  :root {
+    --canvas: transparent;
+    --surface: rgba(255, 255, 255, 0.82);
+    --surface-solid: #FFFFFF;
+    --ink: #1D1D1F;
+    --ink-secondary: rgba(29, 29, 31, 0.56);
+    --ink-tertiary: rgba(29, 29, 31, 0.36);
+    --hairline: rgba(29, 29, 31, 0.08);
+    --hairline-strong: rgba(29, 29, 31, 0.13);
+    --control-fill: rgba(29, 29, 31, 0.055);
+    --control-hover: rgba(29, 29, 31, 0.095);
+    --accent: #0071E3;
+    --accent-hover: #0064C9;
+    --accent-ring: rgba(0, 113, 227, 0.22);
+
+    --radius-card: 12px;
+    --radius-control: 8px;
+    --shadow-card: 0 1px 2px rgba(29, 29, 31, 0.03), 0 8px 24px rgba(29, 29, 31, 0.045);
+    --shadow-pill: 0 1px 3px rgba(29, 29, 31, 0.10), 0 1px 1px rgba(29, 29, 31, 0.04);
+    --ease-apple: cubic-bezier(0.22, 1, 0.36, 1);
+
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI Variable Text", "Segoe UI", "Helvetica Neue", sans-serif;
+    --font-mono: "SF Mono", ui-monospace, "Cascadia Code", "Consolas", "Menlo", monospace;
+  }
+
+  body.platform-win {
+    --canvas: #F5F5F7;
+    --surface: rgba(255, 255, 255, 0.92);
+  }
+
+  body.platform-win .app {
+    padding-top: 24px;
+  }
+
+  * {
+    box-sizing: border-box;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.45;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .app {
+    height: 100%;
+    width: 100%;
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 8px 32px 24px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* --------------------------------------------------------------------------
+     1. Permission Notice (quiet glass strip, shown only if macOS blocks access)
+     -------------------------------------------------------------------------- */
+  .permission-banner {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 16px;
+    background: var(--surface);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    backdrop-filter: blur(24px) saturate(180%);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card), inset 0 0 0 0.5px var(--hairline-strong);
+    animation: fadeSlideIn 220ms var(--ease-apple);
+  }
+  .permission-banner.visible {
+    display: flex;
+  }
+  .permission-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .permission-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .permission-desc {
+    font-size: 12px;
+    color: var(--ink-secondary);
+  }
+  .permission-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  /* --------------------------------------------------------------------------
+     2. Header (Spacious Identity & Primary Mode Segmented Control)
+     -------------------------------------------------------------------------- */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 0 4px;
+    flex-shrink: 0;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-width: 0;
+  }
+
+  .brand-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--ink);
+    box-shadow: 0 2px 8px rgba(29, 29, 31, 0.14), inset 0 0 0 0.5px rgba(255, 255, 255, 0.16);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .brand-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .brand-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .brand-title {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1.15;
+    color: var(--ink);
+  }
+
+  .brand-status {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--ink-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: color 180ms var(--ease-apple);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .brand-status.active {
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  /* Sliding Apple Segmented Control */
+  .segmented {
+    position: relative;
+    display: inline-grid;
+    grid-template-columns: 1fr 1fr;
+    padding: 3px;
+    background: var(--control-fill);
+    border-radius: var(--radius-control);
+    box-shadow: inset 0 0 0 0.5px var(--hairline);
+    flex-shrink: 0;
+  }
+
+  .segmented-thumb {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: calc(50% - 3px);
+    height: calc(100% - 6px);
+    background: var(--surface-solid);
+    border-radius: 6px;
+    box-shadow: var(--shadow-pill);
+    transition: transform 220ms var(--ease-apple);
+    pointer-events: none;
+  }
+
+  .segmented[data-mode="text"] .segmented-thumb {
+    transform: translateX(100%);
+  }
+
+  .segmented button {
+    position: relative;
+    z-index: 1;
+    appearance: none;
+    border: none;
+    background: transparent;
+    padding: 6px 16px;
+    font-family: var(--font-sans);
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ink-secondary);
+    cursor: pointer;
+    border-radius: 6px;
+    transition: color 180ms var(--ease-apple);
+    white-space: nowrap;
+  }
+
+  .segmented button.active {
+    color: var(--ink);
+  }
+
+  /* --------------------------------------------------------------------------
+     3. Glass Card Base
+     -------------------------------------------------------------------------- */
+  .card {
+    background: var(--surface);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    backdrop-filter: blur(24px) saturate(180%);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card), inset 0 0 0 0.5px var(--hairline);
+  }
+
+  /* --------------------------------------------------------------------------
+     4. Focal Editor Card (Content-First, Expands)
+     -------------------------------------------------------------------------- */
+  .editor-card {
+    flex: 1 1 auto;
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .editor-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--hairline);
+    flex-shrink: 0;
+  }
+
+  .editor-meta {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .editor-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .quiet-btn {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: var(--ink-secondary);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 150ms var(--ease-apple), color 150ms var(--ease-apple), transform 120ms var(--ease-apple), opacity 180ms var(--ease-apple);
+  }
+
+  .quiet-btn:hover {
+    background: var(--control-fill);
+    color: var(--ink);
+  }
+
+  .quiet-btn:active {
+    transform: scale(0.975);
+    background: var(--control-hover);
+  }
+
+  .quiet-btn.hidden {
+    display: none;
+  }
+
+  .quiet-btn-pill {
+    background: var(--control-fill);
+    color: var(--ink);
+  }
+
+  .quiet-btn-pill:hover {
+    background: var(--control-hover);
+  }
+
+  .editor-well {
+    flex: 1 1 auto;
+    position: relative;
+    background: var(--surface-solid);
+    display: flex;
+    min-height: 0;
+  }
+
+  #editor {
+    width: 100%;
+    height: 100%;
+    border: none;
+    outline: none;
+    resize: none;
+    background: transparent;
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.6;
+    padding: 16px 20px;
+    tab-size: 4;
+    -moz-tab-size: 4;
+    white-space: pre;
+    overflow: auto;
+    user-select: text;
+    -webkit-user-select: text;
+    caret-color: var(--accent);
+  }
+
+  #editor.wrapped {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+
+  #editor::placeholder {
+    color: var(--ink-tertiary);
+    font-family: var(--font-sans);
+    font-size: 13.5px;
+  }
+
+  /* Subtle macOS-style scrollbars */
+  #editor::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  #editor::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  #editor::-webkit-scrollbar-thumb {
+    background: rgba(29, 29, 31, 0.16);
+    border-radius: 8px;
+    border: 2.5px solid transparent;
+    background-clip: content-box;
+  }
+  #editor::-webkit-scrollbar-thumb:hover {
+    background: rgba(29, 29, 31, 0.28);
+    border: 2.5px solid transparent;
+    background-clip: content-box;
+  }
+  #editor::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* --------------------------------------------------------------------------
+     5. Settings Card (Quiet Grouped Controls on 8px Grid)
+     -------------------------------------------------------------------------- */
+  .settings-card {
+    padding: 16px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+
+  .speed-block {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .row-between {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .label-primary {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+
+  .readout {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ink-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .slider-wrap {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .slider-end {
+    font-size: 11.5px;
+    color: var(--ink-tertiary);
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 4px;
+    border-radius: 4px;
+    background: var(--hairline-strong);
+    outline: none;
+    cursor: pointer;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--surface-solid);
+    box-shadow: 0 1px 4px rgba(29, 29, 31, 0.22), 0 0 0 0.5px rgba(29, 29, 31, 0.12);
+    transition: transform 140ms var(--ease-apple), box-shadow 140ms var(--ease-apple);
+  }
+
+  input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.06);
+  }
+
+  input[type="range"]::-webkit-slider-thumb:active {
+    transform: scale(0.96);
+    box-shadow: 0 0 0 4px var(--accent-ring), 0 1px 4px rgba(29, 29, 31, 0.24);
+  }
+
+  .divider {
+    height: 1px;
+    background: var(--hairline);
+    width: 100%;
+  }
+
+  .controls-grid {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px 24px;
+  }
+
+  .toggle-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+  }
+
+  .toggle-label {
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--ink);
+  }
+
+  /* macOS native-proportion pill switch */
+  .switch {
+    position: relative;
+    width: 34px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+
+  .switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+  }
+
+  .switch-track {
+    position: absolute;
+    inset: 0;
+    border-radius: 10px;
+    background: rgba(29, 29, 31, 0.16);
+    transition: background 180ms var(--ease-apple);
+  }
+
+  .switch-track::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--surface-solid);
+    box-shadow: 0 1px 2px rgba(29, 29, 31, 0.22);
+    transition: transform 180ms var(--ease-apple);
+  }
+
+  .switch input:checked + .switch-track {
+    background: var(--accent);
+  }
+
+  .switch input:checked + .switch-track::after {
+    transform: translateX(14px);
+  }
+
+  /* Quiet Stepper (Start Countdown) */
+  .stepper-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .stepper {
+    display: inline-flex;
+    align-items: center;
+    background: var(--control-fill);
+    border-radius: var(--radius-control);
+    box-shadow: inset 0 0 0 0.5px var(--hairline);
+    padding: 2px;
+    gap: 2px;
+  }
+
+  .stepper button {
+    appearance: none;
+    border: none;
+    background: transparent;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink-secondary);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 140ms var(--ease-apple), color 140ms var(--ease-apple);
+  }
+
+  .stepper button:hover {
+    background: var(--surface-solid);
+    color: var(--ink);
+  }
+
+  .stepper-val {
+    min-width: 34px;
+    text-align: center;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Smooth Collapsible Code Indentation Section */
+  .code-drawer {
+    display: grid;
+    grid-template-rows: 1fr;
+    opacity: 1;
+    transition: grid-template-rows 240ms var(--ease-apple), opacity 200ms var(--ease-apple), margin-top 240ms var(--ease-apple);
+  }
+
+  .code-drawer.collapsed {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    margin-top: -16px;
+    pointer-events: none;
+  }
+
+  .code-drawer-inner {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* Compact Tab Width Selector */
+  .mini-segment {
+    display: inline-flex;
+    align-items: center;
+    background: var(--control-fill);
+    border-radius: var(--radius-control);
+    box-shadow: inset 0 0 0 0.5px var(--hairline);
+    padding: 2px;
+    gap: 2px;
+  }
+
+  .mini-segment button {
+    appearance: none;
+    border: none;
+    background: transparent;
+    min-width: 28px;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 6px;
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--ink-secondary);
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+    transition: background 160ms var(--ease-apple), color 160ms var(--ease-apple), box-shadow 160ms var(--ease-apple);
+  }
+
+  .mini-segment button.active {
+    background: var(--surface-solid);
+    color: var(--ink);
+    box-shadow: var(--shadow-pill);
+  }
+
+  /* --------------------------------------------------------------------------
+     6. Action Footer (Progress Hairline + One Clear Primary Action)
+     -------------------------------------------------------------------------- */
+  .footer {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+
+  .progress-track {
+    width: 100%;
+    height: 3px;
+    border-radius: 3px;
+    background: var(--hairline);
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 220ms var(--ease-apple);
+  }
+
+  .progress-track.visible {
+    opacity: 1;
+  }
+
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width 160ms var(--ease-apple);
+  }
+
+  .footer-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 4px;
+  }
+
+  .shortcuts {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 12px;
+    color: var(--ink-secondary);
+  }
+
+  .shortcut-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 6px;
+    border-radius: 5px;
+    background: var(--control-fill);
+    box-shadow: inset 0 0 0 0.5px var(--hairline-strong);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+
+  .footer-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .primary-btn {
+    appearance: none;
+    border: none;
+    height: 40px;
+    padding: 0 24px;
+    border-radius: var(--radius-control);
+    background: var(--accent);
+    color: var(--surface-solid);
+    font-family: var(--font-sans);
+    font-size: 13.5px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0, 113, 227, 0.22), 0 4px 12px rgba(0, 113, 227, 0.16);
+    transition: background 160ms var(--ease-apple), transform 120ms var(--ease-apple), box-shadow 160ms var(--ease-apple);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 148px;
+    justify-content: center;
+  }
+
+  .primary-btn:hover {
+    background: var(--accent-hover);
+  }
+
+  .primary-btn:active {
+    transform: scale(0.985);
+  }
+
+  .primary-btn.stopping {
+    background: var(--ink);
+    box-shadow: 0 1px 2px rgba(29, 29, 31, 0.20), 0 4px 12px rgba(29, 29, 31, 0.12);
+  }
+
+  .primary-btn.stopping:hover {
+    background: #333336;
+  }
+
+  @keyframes fadeSlideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+</style>
+</head>
+<body class="__PLATFORM_CLASS__">
+  <div class="app">
+
+    <!-- Quiet macOS Permission Notice (hidden once granted) -->
+    <div id="permBanner" class="permission-banner">
+      <div class="permission-copy">
+        <div class="permission-title">macOS permission required</div>
+        <div id="permDesc" class="permission-desc">Allow CynoType in Privacy &amp; Security so it can simulate keystrokes.</div>
+      </div>
+      <div class="permission-actions">
+        <button id="btnOpenPerm" class="quiet-btn quiet-btn-pill" type="button">Open Settings</button>
+        <button id="btnRecheckPerm" class="quiet-btn" type="button">Recheck</button>
+      </div>
+    </div>
+
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <div class="brand-icon">
+          <img id="brandLogo" src="__LOGO_MARK_DATA__" alt="CynoType" />
+        </div>
+        <div class="brand-copy">
+          <h1 class="brand-title">CynoType</h1>
+          <div id="statusLine" class="brand-status">Ready to type</div>
+        </div>
+      </div>
+
+      <div id="modeSegmented" class="segmented" data-mode="code" role="tablist" aria-label="Typing Mode">
+        <div class="segmented-thumb"></div>
+        <button id="tabCode" class="active" type="button" role="tab" aria-selected="true">Code</button>
+        <button id="tabText" type="button" role="tab" aria-selected="false">Plain Text</button>
+      </div>
+    </header>
+
+    <!-- Focal Editor Card -->
+    <section class="card editor-card">
+      <div class="editor-bar">
+        <div id="statsLabel" class="editor-meta">0 lines &middot; 0 characters</div>
+        <div class="editor-actions">
+          <button id="btnAutoDetect" class="quiet-btn" type="button" title="Analyze pasted code and configure tab width">Auto-Detect</button>
+          <button id="btnPaste" class="quiet-btn" type="button">Paste</button>
+          <button id="btnClear" class="quiet-btn" type="button">Clear</button>
+        </div>
+      </div>
+      <div class="editor-well">
+        <textarea
+          id="editor"
+          spellcheck="false"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          placeholder="Paste code or text to type..."
+        ></textarea>
+      </div>
+    </section>
+
+    <!-- Quiet Tuning Card -->
+    <section class="card settings-card">
+      <div class="speed-block">
+        <div class="row-between">
+          <span class="label-primary">Typing Speed</span>
+          <span id="speedReadout" class="readout">45 ms &middot; ~266 WPM</span>
+        </div>
+        <div class="slider-wrap">
+          <span class="slider-end">Fast</span>
+          <input id="speedSlider" type="range" min="10" max="250" step="1" value="45" />
+          <span class="slider-end">Slow</span>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="controls-grid">
+        <label class="toggle-item">
+          <span class="switch">
+            <input id="chkHumanize" type="checkbox" checked />
+            <span class="switch-track"></span>
+          </span>
+          <span class="toggle-label">Natural rhythm</span>
+        </label>
+
+        <label class="toggle-item">
+          <span class="switch">
+            <input id="chkMinimize" type="checkbox" checked />
+            <span class="switch-track"></span>
+          </span>
+          <span class="toggle-label">Minimize while typing</span>
+        </label>
+
+        <div class="stepper-group">
+          <span class="toggle-label">Delay</span>
+          <div class="stepper">
+            <button id="btnDelayDown" type="button" aria-label="Decrease delay">&minus;</button>
+            <span id="delayValue" class="stepper-val">5 s</span>
+            <button id="btnDelayUp" type="button" aria-label="Increase delay">+</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Smart IDE Indentation Options (smoothly collapses in Plain Text mode) -->
+      <div id="codeDrawer" class="code-drawer">
+        <div class="code-drawer-inner">
+          <div class="divider"></div>
+          <div class="controls-grid">
+            <label class="toggle-item" title="Types leading indentation using the Tab key instead of individual spaces">
+              <span class="switch">
+                <input id="chkUseTab" type="checkbox" checked />
+                <span class="switch-track"></span>
+              </span>
+              <span class="toggle-label">Tab key indent</span>
+            </label>
+
+            <label class="toggle-item" title="Presses Esc before Enter to close IDE autocomplete popups cleanly">
+              <span class="switch">
+                <input id="chkDismissPopup" type="checkbox" checked />
+                <span class="switch-track"></span>
+              </span>
+              <span class="toggle-label">Dismiss autocomplete</span>
+            </label>
+
+            <label class="toggle-item">
+              <span class="switch">
+                <input id="chkWrap" type="checkbox" />
+                <span class="switch-track"></span>
+              </span>
+              <span class="toggle-label">Wrap lines</span>
+            </label>
+
+            <div class="stepper-group">
+              <span class="toggle-label">Tab width</span>
+              <div id="tabWidthGroup" class="mini-segment" role="radiogroup" aria-label="Spaces per Tab">
+                <button type="button" data-spaces="2">2</button>
+                <button type="button" data-spaces="4" class="active">4</button>
+                <button type="button" data-spaces="8">8</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Primary Action Footer -->
+    <footer class="footer">
+      <div id="progressTrack" class="progress-track">
+        <div id="progressFill" class="progress-fill"></div>
+      </div>
+
+      <div class="footer-bar">
+        <div class="shortcuts">
+          <span class="shortcut-item"><span id="kbdStart" class="kbd">&#8984;&#8617;</span> Start</span>
+          <span id="kbdStopWrap" class="shortcut-item"><span class="kbd">Esc</span> or <span class="kbd">F8</span> Stop</span>
+        </div>
+
+        <div class="footer-actions">
+          <button id="btnReset" class="quiet-btn" type="button">Reset</button>
+          <button id="btnPrimary" class="primary-btn" type="button">Start Typing</button>
+        </div>
+      </div>
+    </footer>
+
+  </div>
+
+<script>
+(function() {
+  const state = {
+    mode: "code", // "code" | "text"
+    delaySec: 5,
+    spacesPerTab: 4,
+    running: false,
+    permPane: "Privacy_Accessibility"
+  };
+
+  const els = {
+    permBanner: document.getElementById("permBanner"),
+    permDesc: document.getElementById("permDesc"),
+    btnOpenPerm: document.getElementById("btnOpenPerm"),
+    btnRecheckPerm: document.getElementById("btnRecheckPerm"),
+    statusLine: document.getElementById("statusLine"),
+    modeSegmented: document.getElementById("modeSegmented"),
+    tabCode: document.getElementById("tabCode"),
+    tabText: document.getElementById("tabText"),
+    statsLabel: document.getElementById("statsLabel"),
+    btnAutoDetect: document.getElementById("btnAutoDetect"),
+    btnPaste: document.getElementById("btnPaste"),
+    btnClear: document.getElementById("btnClear"),
+    editor: document.getElementById("editor"),
+    speedSlider: document.getElementById("speedSlider"),
+    speedReadout: document.getElementById("speedReadout"),
+    chkHumanize: document.getElementById("chkHumanize"),
+    chkMinimize: document.getElementById("chkMinimize"),
+    btnDelayDown: document.getElementById("btnDelayDown"),
+    btnDelayUp: document.getElementById("btnDelayUp"),
+    delayValue: document.getElementById("delayValue"),
+    codeDrawer: document.getElementById("codeDrawer"),
+    chkUseTab: document.getElementById("chkUseTab"),
+    chkDismissPopup: document.getElementById("chkDismissPopup"),
+    chkWrap: document.getElementById("chkWrap"),
+    tabWidthGroup: document.getElementById("tabWidthGroup"),
+    progressTrack: document.getElementById("progressTrack"),
+    progressFill: document.getElementById("progressFill"),
+    btnReset: document.getElementById("btnReset"),
+    btnPrimary: document.getElementById("btnPrimary")
+  };
+
+  function post(action, payload) {
+    const msg = Object.assign({ action: action }, payload || {});
+    try {
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bridge) {
+        window.webkit.messageHandlers.bridge.postMessage(msg);
+      } else if (window.pywebview && window.pywebview.api && window.pywebview.api.dispatch) {
+        window.pywebview.api.dispatch(msg);
+      }
+    } catch (e) {}
+  }
+
+  function updateStats() {
+    const raw = els.editor.value;
+    const chars = raw.length;
+    const lines = raw.length === 0 ? 0 : raw.split("\n").length;
+    const lineWord = lines === 1 ? "line" : "lines";
+    const charWord = chars === 1 ? "character" : "characters";
+    els.statsLabel.textContent = lines.toLocaleString() + " " + lineWord + " \u00B7 " + chars.toLocaleString() + " " + charWord;
+  }
+
+  function updateSpeedReadout() {
+    const ms = Number(els.speedSlider.value);
+    const cps = ms > 0 ? 1000 / ms : 0;
+    const wpm = Math.round((cps * 60) / 5);
+    els.speedReadout.textContent = ms + " ms \u00B7 ~" + wpm + " WPM";
+    const pct = ((ms - 10) / (250 - 10)) * 100;
+    els.speedSlider.style.background =
+      "linear-gradient(to right, var(--accent) 0%, var(--accent) " + pct + "%, var(--hairline-strong) " + pct + "%, var(--hairline-strong) 100%)";
+  }
+
+  function setMode(mode) {
+    state.mode = mode;
+    els.modeSegmented.setAttribute("data-mode", mode);
+    const isCode = mode === "code";
+    els.tabCode.classList.toggle("active", isCode);
+    els.tabText.classList.toggle("active", !isCode);
+    els.tabCode.setAttribute("aria-selected", String(isCode));
+    els.tabText.setAttribute("aria-selected", String(!isCode));
+    els.codeDrawer.classList.toggle("collapsed", !isCode);
+    els.btnAutoDetect.classList.toggle("hidden", !isCode);
+    if (!isCode) {
+      els.editor.classList.add("wrapped");
+    } else {
+      els.editor.classList.toggle("wrapped", els.chkWrap.checked);
+    }
+  }
+
+  function setSpacesPerTab(spaces) {
+    state.spacesPerTab = spaces;
+    els.editor.style.tabSize = String(spaces);
+    els.editor.style.MozTabSize = String(spaces);
+    const btns = els.tabWidthGroup.querySelectorAll("button");
+    btns.forEach(function(b) {
+      b.classList.toggle("active", Number(b.getAttribute("data-spaces")) === spaces);
+    });
+  }
+
+  function setDelay(sec) {
+    state.delaySec = Math.max(1, Math.min(30, sec));
+    els.delayValue.textContent = state.delaySec + " s";
+  }
+
+  function setStatus(text, isActive) {
+    els.statusLine.textContent = text;
+    els.statusLine.classList.toggle("active", Boolean(isActive));
+  }
+
+  function setRunningUI(running) {
+    state.running = running;
+    if (running) {
+      els.btnPrimary.textContent = "Stop Typing";
+      els.btnPrimary.classList.add("stopping");
+      els.progressTrack.classList.add("visible");
+    } else {
+      els.btnPrimary.textContent = "Start Typing";
+      els.btnPrimary.classList.remove("stopping");
+    }
+  }
+
+  function triggerStart() {
+    if (state.running) {
+      post("stop", { source: "Stop button" });
+      return;
+    }
+    const text = els.editor.value;
+    if (!text) {
+      setStatus("Paste or type some content first", false);
+      els.editor.focus();
+      return;
+    }
+    post("start", {
+      text: text,
+      base_delay_ms: Number(els.speedSlider.value),
+      randomize: els.chkHumanize.checked,
+      auto_minimize: els.chkMinimize.checked,
+      start_delay: state.delaySec,
+      code_mode: state.mode === "code",
+      dismiss_autocomplete: els.chkDismissPopup.checked,
+      use_tab_key: els.chkUseTab.checked,
+      spaces_per_tab: state.spacesPerTab
+    });
+  }
+
+  // Insert text into textarea while preserving Undo history
+  function insertTextClean(text) {
+    const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    els.editor.focus();
+    const ok = document.execCommand("insertText", false, normalized);
+    if (!ok) {
+      const start = els.editor.selectionStart;
+      const end = els.editor.selectionEnd;
+      els.editor.value = els.editor.value.slice(0, start) + normalized + els.editor.value.slice(end);
+      els.editor.selectionStart = els.editor.selectionEnd = start + normalized.length;
+    }
+    updateStats();
+  }
+
+  // In-editor Tab & Shift+Tab support (matches Chanul v2)
+  function handleEditorKeydown(e) {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const ta = els.editor;
+      const val = ta.value;
+      const selStart = ta.selectionStart;
+      const selEnd = ta.selectionEnd;
+
+      if (!e.shiftKey && selStart === selEnd) {
+        insertTextClean("\t");
+        return;
+      }
+
+      // Find full lines covered by selection
+      const lineStart = val.lastIndexOf("\n", selStart - 1) + 1;
+      let lineEnd = val.indexOf("\n", selEnd);
+      if (lineEnd === -1) lineEnd = val.length;
+      if (selEnd > lineStart && val[selEnd - 1] === "\n") {
+        lineEnd = selEnd - 1;
+      }
+
+      const block = val.slice(lineStart, lineEnd);
+      const lines = block.split("\n");
+      let updatedLines;
+
+      if (!e.shiftKey) {
+        updatedLines = lines.map(function(l) { return "\t" + l; });
+      } else {
+        const sp = state.spacesPerTab;
+        const spPrefix = " ".repeat(sp);
+        updatedLines = lines.map(function(l) {
+          if (l.startsWith("\t")) return l.slice(1);
+          if (l.startsWith(spPrefix)) return l.slice(sp);
+          if (l.startsWith(" ")) {
+            const lead = l.length - l.trimStart().length;
+            return l.slice(Math.min(sp, lead));
+          }
+          return l;
+        });
+      }
+
+      const replaced = updatedLines.join("\n");
+      ta.setSelectionRange(lineStart, lineEnd);
+      const ok = document.execCommand("insertText", false, replaced);
+      if (!ok) {
+        ta.value = val.slice(0, lineStart) + replaced + val.slice(lineEnd);
+      }
+      ta.setSelectionRange(lineStart, lineStart + replaced.length);
+      updateStats();
+    }
+  }
+
+  // True-to-source paste handler (preserves exact leading spaces/tabs & normalizes CRLF)
+  els.editor.addEventListener("paste", function(e) {
+    if (e.clipboardData) {
+      const raw = e.clipboardData.getData("text/plain");
+      if (typeof raw === "string") {
+        e.preventDefault();
+        const wasEmpty = els.editor.value.trim().length === 0;
+        insertTextClean(raw);
+        if (wasEmpty && state.mode === "code") {
+          post("auto_detect", { text: els.editor.value, silent: true });
+        }
+      }
+    }
+  });
+
+  els.editor.addEventListener("input", updateStats);
+  els.editor.addEventListener("keydown", handleEditorKeydown);
+
+  // Global window keyboard shortcuts
+  window.addEventListener("keydown", function(e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      if (!state.running) triggerStart();
+      return;
+    }
+    if (e.key === "F6") {
+      e.preventDefault();
+      if (!state.running) triggerStart();
+      return;
+    }
+    if ((e.key === "Escape" || e.key === "F8") && state.running) {
+      e.preventDefault();
+      post("stop", { source: "Hotkey (" + e.key.toUpperCase() + ")" });
+    }
+  });
+
+  // UI event bindings
+  els.tabCode.addEventListener("click", function() { setMode("code"); });
+  els.tabText.addEventListener("click", function() { setMode("text"); });
+
+  els.speedSlider.addEventListener("input", updateSpeedReadout);
+
+  els.btnDelayDown.addEventListener("click", function() { setDelay(state.delaySec - 1); });
+  els.btnDelayUp.addEventListener("click", function() { setDelay(state.delaySec + 1); });
+
+  els.chkWrap.addEventListener("change", function() {
+    if (state.mode === "code") {
+      els.editor.classList.toggle("wrapped", els.chkWrap.checked);
+    }
+  });
+
+  els.tabWidthGroup.querySelectorAll("button").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      setSpacesPerTab(Number(btn.getAttribute("data-spaces")));
+    });
+  });
+
+  els.btnPaste.addEventListener("click", function() {
+    post("request_paste");
+  });
+
+  els.btnAutoDetect.addEventListener("click", function() {
+    post("auto_detect", { text: els.editor.value, silent: false });
+  });
+
+  els.btnClear.addEventListener("click", function() {
+    els.editor.value = "";
+    updateStats();
+    els.editor.focus();
+  });
+
+  els.btnReset.addEventListener("click", function() {
+    post("request_reset", { has_text: els.editor.value.trim().length > 0 });
+  });
+
+  els.btnPrimary.addEventListener("click", triggerStart);
+
+  els.btnOpenPerm.addEventListener("click", function() {
+    post("open_permissions", { pane: state.permPane });
+  });
+  els.btnRecheckPerm.addEventListener("click", function() {
+    post("check_permissions");
+  });
+
+  // --------------------------------------------------------------------------
+  // Python -> JS bridge callbacks
+  // --------------------------------------------------------------------------
+  window.CynoBridge = {
+    onPasteText: function(text) {
+      if (!text) return;
+      const wasEmpty = els.editor.value.trim().length === 0;
+      insertTextClean(text);
+      if (wasEmpty && state.mode === "code") {
+        post("auto_detect", { text: els.editor.value, silent: true });
+      }
+    },
+
+    onAutoDetectResult: function(spaces, useTab, msg, silent) {
+      if (spaces === 2 || spaces === 4 || spaces === 8) {
+        setSpacesPerTab(spaces);
+      } else {
+        state.spacesPerTab = spaces;
+        els.editor.style.tabSize = String(spaces);
+      }
+      if (typeof useTab === "boolean") {
+        els.chkUseTab.checked = useTab;
+      }
+      if (!silent && msg) {
+        setStatus(msg, false);
+      }
+    },
+
+    onPerformReset: function() {
+      els.editor.value = "";
+      els.speedSlider.value = "45";
+      updateSpeedReadout();
+      els.chkHumanize.checked = true;
+      els.chkMinimize.checked = true;
+      setDelay(5);
+      setMode("code");
+      els.chkUseTab.checked = true;
+      els.chkDismissPopup.checked = true;
+      els.chkWrap.checked = false;
+      els.editor.classList.remove("wrapped");
+      setSpacesPerTab(4);
+      els.progressFill.style.width = "0%";
+      els.progressTrack.classList.remove("visible");
+      setRunningUI(false);
+      setStatus("Reset to defaults", false);
+      updateStats();
+    },
+
+    onPermissions: function(canType, canListen, desc, pane) {
+      if (canType && canListen) {
+        els.permBanner.classList.remove("visible");
+      } else {
+        els.permDesc.textContent = desc;
+        state.permPane = pane || "Privacy_Accessibility";
+        els.permBanner.classList.add("visible");
+      }
+    },
+
+    onStarted: function() {
+      setRunningUI(true);
+      els.progressFill.style.width = "0%";
+    },
+
+    onStatus: function(msg, isActive) {
+      setStatus(msg, isActive);
+    },
+
+    onProgress: function(pct, msg) {
+      els.progressTrack.classList.add("visible");
+      els.progressFill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+      setStatus(msg, true);
+    },
+
+    onFinished: function(totalChars) {
+      setRunningUI(false);
+      els.progressFill.style.width = "100%";
+      setStatus("Finished \u00B7 " + totalChars.toLocaleString() + " characters typed", false);
+      setTimeout(function() {
+        if (!state.running) {
+          els.progressTrack.classList.remove("visible");
+          els.progressFill.style.width = "0%";
+        }
+      }, 1400);
+    },
+
+    onStopped: function(reason) {
+      setRunningUI(false);
+      els.progressTrack.classList.remove("visible");
+      els.progressFill.style.width = "0%";
+      setStatus("Stopped \u00B7 " + reason, false);
+    }
+  };
+
+  // Adapt shortcut badges on Windows / Linux
+  if (document.body.classList.contains("platform-win")) {
+    const kbdStart = document.getElementById("kbdStart");
+    const kbdStopWrap = document.getElementById("kbdStopWrap");
+    if (kbdStart) kbdStart.textContent = "Ctrl+Enter";
+    if (kbdStopWrap) kbdStopWrap.innerHTML = '<span class="kbd">F8</span> Stop';
+  }
+
+  // Initialize
+  updateSpeedReadout();
+  updateStats();
+  setMode("code");
+  setSpacesPerTab(4);
+  setDelay(5);
+  post("ui_ready");
+  window.addEventListener("pywebviewready", function() {
+    post("ui_ready");
+  });
+})();
+</script>
+</body>
+</html>
