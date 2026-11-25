@@ -9,6 +9,27 @@
   Simulate realistic keystrokes, preserve exact IDE indentation, and drive browser inputs via Model Context Protocol.
 </p>
 
+<p align="center">
+  <a href="https://github.com/ChamupathiD/CynoType/releases/latest/download/CynoType-Installer.dmg"><strong>Download for macOS (.dmg)</strong></a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://github.com/ChamupathiD/CynoType/releases/latest/download/CynoType.exe"><strong>Download for Windows (.exe)</strong></a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://github.com/ChamupathiD/CynoType/releases/latest">All Releases</a>
+</p>
+
+---
+
+## Download
+
+No Python or library installation required — just download and open:
+
+| Platform | Direct Download | Notes |
+|---|---|---|
+| **macOS** | [**CynoType-Installer.dmg**](https://github.com/ChamupathiD/CynoType/releases/latest/download/CynoType-Installer.dmg) | Drag **CynoType** to **Applications**. First launch: Right-click → Open. |
+| **Windows** | [**CynoType.exe**](https://github.com/ChamupathiD/CynoType/releases/latest/download/CynoType.exe) | Standalone portable executable (Windows 10 / 11 with built-in WebView2). |
+
+Browse all versions and SHA-256 checksums on the [GitHub Releases page](https://github.com/ChamupathiD/CynoType/releases).
+
 ---
 
 ## Overview
@@ -40,7 +61,7 @@
 ## Quick Start
 
 ### macOS (End Users — No Setup Required)
-1. Download **`CynoType-Installer.dmg`** from [GitHub Releases](../../releases) (or build locally with `./build_mac.sh`).
+1. Download [**`CynoType-Installer.dmg`**](https://github.com/ChamupathiD/CynoType/releases/latest/download/CynoType-Installer.dmg) (or build locally with `./build_mac.sh`).
 2. Double-click the `.dmg` and drag **CynoType** into **Applications**.
 3. Open **CynoType** *(first launch: Right-click → Open → Open)*.
 4. Click **Open Settings** in the in-app banner to grant one-time permissions:
@@ -48,7 +69,7 @@
    - **Privacy & Security → Input Monitoring** → enable **CynoType**
 
 ### Windows (End Users — No Setup Required)
-1. Download **`CynoType.exe`** from [GitHub Releases](../../releases) or GitHub Actions artifacts (or build on Windows with `build_win.bat`).
+1. Download [**`CynoType.exe`**](https://github.com/ChamupathiD/CynoType/releases/latest/download/CynoType.exe) (or build on Windows with `build_win.bat`).
 2. Double-click **`CynoType.exe`** (uses Microsoft Edge WebView2 built into Windows 10 & 11).
 
 ### Run from Source (Developers)
